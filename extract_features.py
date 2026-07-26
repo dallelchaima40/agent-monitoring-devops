@@ -19,7 +19,13 @@ aligner les fenetres avec Prometheus, qui mesure lui aussi en temps reel.
 On agrege donc toujours sur `@timestamp`, jamais sur `bgl_timestamp`.
 
 Usage :
-    pip install elasticsearch requests pandas --break-system-packages
+    # IMPORTANT : le client Python "elasticsearch" doit etre en version 8.x
+    # pour parler a un serveur Elasticsearch 8.13.4 (celui du
+    # docker-compose.yml). La derniere version du client (9.x, installee par
+    # defaut par un simple "pip install elasticsearch") envoie un header de
+    # compatibilite "v9" que le serveur 8.13.4 refuse
+    # (BadRequestError: media_type_header_exception).
+    pip install "elasticsearch==8.13.0" requests pandas --break-system-packages
 
     python3 extract_features.py \
         --es-host http://localhost:9200 \
@@ -49,16 +55,27 @@ except ImportError:  # pragma: no cover
 # Requetes Prometheus (PromQL) - une par metrique voulue dans le dataset final
 # ---------------------------------------------------------------------------
 PROM_QUERIES = {
-    # Taux d'utilisation CPU reel du conteneur log-replayer (cAdvisor)
-    "cpu_usage_rate": 'rate(container_cpu_usage_seconds_total{name="log-replayer"}[1m])',
-    # Memoire reellement utilisee par le conteneur (cAdvisor)
-    "memory_usage_bytes": 'container_memory_usage_bytes{name="log-replayer"}',
+    # Taux d'utilisation CPU reel du conteneur log-replayer, MESURE PAR LE
+    # REPLAYER LUI-MEME (cgroup v2 direct) - PAS via cAdvisor, qui echoue a
+    # identifier les conteneurs individuels sur les hotes Docker recents
+    # utilisant le backend "containerd snapshotter" (cf. diagnostic prealable :
+    # erreurs "failed to identify the read-write layer ID" dans les logs
+    # cAdvisor). / 1e6 convertit les microsecondes CPU en secondes CPU, pour
+    # un resultat directement comparable a un ancien "rate(...seconds_total)".
+    "cpu_usage_rate": "rate(bgl_replayer_container_cpu_usec_total[1m]) / 1e6",
+    # Memoire reellement utilisee, idem : lue directement depuis cgroup v2.
+    "memory_usage_bytes": "bgl_replayer_container_memory_bytes",
     # Debit de logs mesure directement par le replayer (metrique custom)
     "replayer_lines_per_second": "bgl_replayer_lines_per_second",
     # Taux d'iterations CPU "mecanisme volume" (custom)
     "replayer_cpu_iter_rate": "rate(bgl_replayer_cpu_iterations_total[1m])",
-    # Taux d'injections de stress reel "mecanisme anomalie" (custom)
-    "replayer_anomalies_rate": "rate(bgl_replayer_anomalies_injected_total[1m])",
+    # Taux d'injections de stress reel "mecanisme anomalie" (custom).
+    # sum(...) est INDISPENSABLE ici : cette metrique a un label
+    # `anomaly_label` (une serie distincte par type d'anomalie BGL), donc
+    # sans agregation Prometheus renvoie plusieurs series et le parsing ne
+    # recuperait que la premiere (bug corrige - avant, la plupart des
+    # injections etaient silencieusement ignorees).
+    "replayer_anomalies_rate": "sum(rate(bgl_replayer_anomalies_injected_total[1m]))",
 }
 
 
@@ -158,16 +175,32 @@ def fetch_prometheus_range(prom_url, query, start, end, step="60s"):
 
 
 def parse_prometheus_response(payload):
-    """Extrait la premiere serie d'une reponse Prometheus en DataFrame.
-    Separee de fetch_prometheus_range() pour etre testable sans serveur."""
+    """Extrait et AGREGE (somme) toutes les series d'une reponse Prometheus
+    en un seul DataFrame (window_start, value).
+
+    IMPORTANT : si la requete PromQL n'agrege pas explicitement (pas de
+    sum(...)/avg(...)), Prometheus peut renvoyer PLUSIEURS series (une par
+    combinaison de labels, ex: une par anomaly_label). Cette fonction les
+    somme TOUTES plutot que de ne garder que la premiere - un bug reel de ce
+    genre (silencieusement ignorer les autres series) a deja ete rencontre
+    sur bgl_replayer_anomalies_injected_total (label anomaly_label).
+
+    Separee de fetch_prometheus_range() pour etre testable sans serveur.
+    """
     result = payload.get("data", {}).get("result", [])
     if not result:
         return pd.DataFrame(columns=["window_start", "value"])
-    values = result[0]["values"]  # [[timestamp_epoch, "valeur_str"], ...]
-    df = pd.DataFrame(values, columns=["ts", "value"])
-    df["window_start"] = pd.to_datetime(df["ts"], unit="s", utc=True)
-    df["value"] = df["value"].astype(float)
-    return df[["window_start", "value"]]
+
+    all_series = []
+    for series in result:
+        values = series["values"]  # [[timestamp_epoch, "valeur_str"], ...]
+        s_df = pd.DataFrame(values, columns=["ts", "value"])
+        s_df["window_start"] = pd.to_datetime(s_df["ts"], unit="s", utc=True)
+        s_df["value"] = s_df["value"].astype(float)
+        all_series.append(s_df[["window_start", "value"]])
+
+    combined = pd.concat(all_series, ignore_index=True)
+    return combined.groupby("window_start", as_index=False)["value"].sum()
 
 
 def fetch_all_metrics(prom_url, start, end, step="60s"):
@@ -184,75 +217,34 @@ def fetch_all_metrics(prom_url, start, end, step="60s"):
 # ---------------------------------------------------------------------------
 # 3. Jointure logs + metriques + construction du label final
 # ---------------------------------------------------------------------------
-def wait_for_service(url, name, max_retries=10, delay=5):
-    """Attend qu'un service soit disponible avant de continuer."""
-    import time
-    for attempt in range(max_retries):
-        try:
-            resp = requests.get(url, timeout=5)
-            if resp.status_code < 500:
-                print(f"{name} est prêt.")
-                return True
-        except requests.exceptions.ConnectionError:
-            pass
-        print(f"{name} pas encore prêt, tentative {attempt+1}/{max_retries}...")
-        time.sleep(delay)
-    print(f"ERREUR : {name} inaccessible après {max_retries} tentatives.")
-    return False
-
-
 def build_dataset(es_host, index, prom_url, start, end, window="1m", step="60s"):
     if Elasticsearch is None:
         raise ImportError(
-            "Le package 'elasticsearch' n'est pas installé : "
+            "Le package 'elasticsearch' n'est pas installe : "
             "pip install elasticsearch --break-system-packages"
         )
-
-    # Vérifier que les services sont disponibles
-    if not wait_for_service(es_host, "Elasticsearch"):
-        raise ConnectionError(f"Elasticsearch inaccessible sur {es_host}")
-
-    if not wait_for_service(f"{prom_url}/api/v1/query?query=up", "Prometheus"):
-        raise ConnectionError(f"Prometheus inaccessible sur {prom_url}")
 
     start = floor_to_minute(start)
     end = floor_to_minute(end) + dt.timedelta(minutes=1)
 
-    try:
-        es = Elasticsearch(es_host)
-        print(f"Récupération des logs depuis Elasticsearch ({index})...")
-        logs_df = fetch_log_features(es, index, start, end, window)
-        print(f"  {len(logs_df)} fenêtres de logs récupérées")
-    except Exception as e:
-        print(f"ERREUR Elasticsearch : {e}")
-        raise
-
-    try:
-        print(f"Récupération des métriques depuis Prometheus...")
-        metrics_df = fetch_all_metrics(prom_url, start, end, step)
-        print(f"  {len(metrics_df)} points de métriques récupérés")
-    except Exception as e:
-        print(f"ERREUR Prometheus : {e}")
-        raise
-
-    if logs_df.empty:
-        print("ATTENTION : aucun log trouvé dans Elasticsearch pour cette période.")
-        print("Vérifie que le replayer tourne et que Filebeat envoie bien les logs.")
-
-    if metrics_df.empty:
-        print("ATTENTION : aucune métrique trouvée dans Prometheus pour cette période.")
-        print("Vérifie que cAdvisor et le replayer exposent bien leurs métriques.")
+    es = Elasticsearch(es_host)
+    logs_df = fetch_log_features(es, index, start, end, window)
+    metrics_df = fetch_all_metrics(prom_url, start, end, step)
 
     df = pd.merge(logs_df, metrics_df, on="window_start", how="outer").sort_values(
         "window_start"
     )
 
+    # Fenetres sans logs (log_count NaN) : 0 ligne, 0 anomalie, 0 composant.
+    # Fenetres sans metriques (rare, ex: replayer pas encore demarre) : 0.
     df[["log_count", "n_components", "n_anomalies"]] = df[
         ["log_count", "n_components", "n_anomalies"]
     ].fillna(0)
     metric_cols = list(PROM_QUERIES.keys())
     df[metric_cols] = df[metric_cols].fillna(0)
 
+    # Label final : anomalie si au moins une vraie anomalie BGL est tombee
+    # dans cette fenetre de 1 minute.
     df["label"] = (df["n_anomalies"] > 0).astype(int)
 
     return df.reset_index(drop=True)

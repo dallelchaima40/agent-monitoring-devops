@@ -108,7 +108,7 @@ services:
     environment:
       - BGL_LOG_PATH=/data/BGL.log
       - OUTPUT_LOG_PATH=/var/log/replay/bgl_replay.log
-      - REPLAY_SPEED=60
+      - REPLAY_SPEED=600
       - MAX_LINES=0
       - METRICS_PORT=8000
       - CPU_WORK_PER_LINE=2000
