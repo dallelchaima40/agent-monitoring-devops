@@ -1,15 +1,14 @@
-filebeat.inputs: []
-
-filebeat.autodiscover:
-  providers:
-    - type: docker
-      hints.enabled: true
-
-processors:
-  - add_docker_metadata:
-      host: "unix:///var/run/docker.sock"
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/replay/*.log
+    fields:
+      dataset: bgl_replay
+    fields_under_root: true
 
 output.logstash:
   hosts: ["logstash:5044"]
 
 logging.level: info
+logging.to_stderr: true

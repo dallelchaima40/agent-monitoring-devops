@@ -1,0 +1,46 @@
+{
+  "name": "BGL Replay Stack",
+  "forwardPorts": [9200, 5601, 9090, 3000, 8080, 8000, 5540, 6379],
+  "portsAttributes": {
+    "9200": {
+      "label": "Elasticsearch",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "5601": {
+      "label": "Kibana",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "9090": {
+      "label": "Prometheus",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "3000": {
+      "label": "Grafana",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "8080": {
+      "label": "cAdvisor",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "8000": {
+      "label": "Replayer Metrics",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "5540": {
+      "label": "RedisInsight",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "6379": {
+      "label": "Redis",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    }
+  }
+}

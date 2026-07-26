@@ -1,97 +1,66 @@
-version: '3.8'
-
-networks:
-  monitoring:
-    driver: bridge
-
-volumes:
-  elasticsearch_data:
-  prometheus_data:
+version: "3.8"
 
 services:
 
-  nginx:
-    image: nginx:latest
-    container_name: nginx
-    ports:
-      - "8080:80"
-    networks:
-      - monitoring
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-
-  app-python:
-    build: ./app-python
-    container_name: app-python
-    networks:
-      - monitoring
-    depends_on:
-      - redis
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-
-  redis:
-    image: redis:7
-    container_name: redis
-    networks:
-      - monitoring
-
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
     ports:
       - "9200:9200"
     volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
+      - es_data:/usr/share/elasticsearch/data
     networks:
-      - monitoring
+      - aiops-net
 
   logstash:
-    image: docker.elastic.co/logstash/logstash:8.11.0
+    image: docker.elastic.co/logstash/logstash:8.13.4
     container_name: logstash
-    environment:
-      - LS_JAVA_OPTS=-Xms256m -Xmx256m
     volumes:
-      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
-      - ./logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
     ports:
       - "5044:5044"
     depends_on:
       - elasticsearch
     networks:
-      - monitoring
+      - aiops-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.4
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - aiops-net
 
   filebeat:
-    image: docker.elastic.co/beats/filebeat:8.11.0
+    image: docker.elastic.co/beats/filebeat:8.13.4
     container_name: filebeat
     user: root
     volumes:
       - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - replay_logs:/var/log/replay:ro
     depends_on:
       - logstash
+      - log-replayer
     networks:
-      - monitoring
+      - aiops-net
 
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
     networks:
-      - monitoring
+      - aiops-net
 
   node-exporter:
     image: prom/node-exporter:latest
@@ -99,33 +68,24 @@ services:
     ports:
       - "9100:9100"
     networks:
-      - monitoring
+      - aiops-net
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    ports:
+      - "8080:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-    ports:
-      - "8081:8080"
     networks:
-      - monitoring
+      - aiops-net
 
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.11.0
-    container_name: kibana
-    environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-    ports:
-      - "5601:5601"
-    depends_on:
-      - elasticsearch
-    networks:
-      - monitoring
-  
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -134,21 +94,54 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_INSTALL_PLUGINS=grafana-opensearch-datasource
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
-      - elasticsearch
     networks:
-      - monitoring
+      - aiops-net
+
+  log-replayer:
+    build: ./log-replayer
+    container_name: log-replayer
+    environment:
+      - BGL_LOG_PATH=/data/BGL.log
+      - OUTPUT_LOG_PATH=/var/log/replay/bgl_replay.log
+      - REPLAY_SPEED=60
+      - MAX_LINES=0
+      - METRICS_PORT=8000
+      - CPU_WORK_PER_LINE=2000
+      - STRESS_DURATION_S=5
+    volumes:
+      - ./data:/data:ro
+      - replay_logs:/var/log/replay
+    ports:
+      - "8000:8000"
+    networks:
+      - aiops-net
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - aiops-net
+
   redisinsight:
     image: redis/redisinsight:latest
     container_name: redisinsight
     ports:
       - "5540:5540"
-    networks:
-      - monitoring
     depends_on:
       - redis
+    networks:
+      - aiops-net
+
+networks:
+  aiops-net:
+
+volumes:
+  es_data:
+  replay_logs:
