@@ -106,6 +106,7 @@ services:
     build: ./log-replayer
     container_name: log-replayer
     environment:
+      # - BGL_LOG_PATH=/data/BGL_mock_healthy.log
       - BGL_LOG_PATH=/data/BGL.log
       - OUTPUT_LOG_PATH=/var/log/replay/bgl_replay.log
       - REPLAY_SPEED=600
