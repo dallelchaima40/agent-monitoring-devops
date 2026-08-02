@@ -14,10 +14,10 @@ print(f"Redis         : {'OK' if r.ping() else 'ERREUR'}")
 print("-" * 50)
 
 def collecter_logs_bgl():
-    """Lit TOUS les logs BGL depuis Elasticsearch — normaux ET anomalies"""
+    """Lit les logs BGL depuis ES et stocke SANS doublons dans Redis"""
     try:
         maintenant = datetime.utcnow()
-        il_y_a_30_min = maintenant - timedelta(minutes=30)
+        il_y_a_5_min = maintenant - timedelta(minutes=5)
 
         result = es.search(index="bgl-replay-*", body={
             "size": 200,
@@ -25,7 +25,7 @@ def collecter_logs_bgl():
             "query": {
                 "range": {
                     "@timestamp": {
-                        "gte": il_y_a_30_min.isoformat(),
+                        "gte": il_y_a_5_min.isoformat(),
                         "lte": maintenant.isoformat()
                     }
                 }
@@ -33,43 +33,59 @@ def collecter_logs_bgl():
         })
 
         logs = result['hits']['hits']
-        compteur_total = 0
+        compteur_nouveaux = 0
+        compteur_doublons = 0
         compteur_anomalies = 0
         compteur_normaux = 0
 
+        # Charger les timestamps déjà stockés pour dédupliquer
+        nb_existants = r.llen("bgl_logs_all")
+        timestamps_existants = set()
+        for i in range(min(nb_existants, 500)):
+            log_json = r.lindex("bgl_logs_all", i)
+            if log_json:
+                log = json.loads(log_json)
+                timestamps_existants.add(log.get("timestamp", ""))
+
         for log in logs:
             source = log['_source']
+            timestamp = source.get('@timestamp', '')
 
-            # is_anomaly vient de Logstash qui a lu le Label BGL
-            # "-" = normal, tout autre label = anomalie réelle vérifiée
+            # Ignorer les doublons
+            if timestamp in timestamps_existants:
+                compteur_doublons += 1
+                continue
+
             is_anomaly = source.get('is_anomaly', 'false') == 'true'
             label = source.get('bgl_label', '-')
 
             entree = {
                 "type": "bgl_log",
-                "timestamp": source.get('@timestamp', ''),
+                "timestamp": timestamp,
                 "label": label,
                 "component": source.get('bgl_component', ''),
                 "level": source.get('bgl_level', ''),
                 "content": source.get('bgl_content', ''),
-                "is_anomaly": is_anomaly,  # ground truth uniquement
+                "is_anomaly": is_anomaly,
                 "collecte_a": datetime.utcnow().isoformat()
             }
 
-            # Stocker TOUS les logs sans filtrer
             r.lpush("bgl_logs_all", json.dumps(entree))
-            compteur_total += 1
+            timestamps_existants.add(timestamp)
+            compteur_nouveaux += 1
 
             if is_anomaly:
                 compteur_anomalies += 1
             else:
                 compteur_normaux += 1
 
-        r.ltrim("bgl_logs_all", 0, 1999)
+        # Garder seulement les 500 derniers logs uniques
+        r.ltrim("bgl_logs_all", 0, 499)
 
-        print(f"[LOGS] Total: {compteur_total} | "
+        print(f"[LOGS] Nouveaux: {compteur_nouveaux} | "
+              f"Doublons ignorés: {compteur_doublons} | "
               f"Normaux: {compteur_normaux} | "
-              f"Anomalies ground truth: {compteur_anomalies}")
+              f"Anomalies: {compteur_anomalies}")
 
     except Exception as e:
         print(f"[LOGS] Erreur : {e}")

@@ -41,7 +41,7 @@ if nb_logs < 50:
     exit(1)
 
 logs_raw = []
-for i in range(min(nb_logs, 2000)):
+for i in range(min(nb_logs, 500)):
     log_json = r.lindex("bgl_logs_all", i)
     if log_json:
         logs_raw.append(json.loads(log_json))
