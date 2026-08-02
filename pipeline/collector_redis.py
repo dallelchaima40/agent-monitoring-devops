@@ -138,7 +138,8 @@ def afficher_stats_redis():
 # Nettoyer les anciennes clés
 r.delete("bgl_logs_anomalies")
 
-print("Collecte toutes les 30 secondes... Ctrl+C pour arrêter")
+# Collecte toutes les 60 secondes (infinie — lancé par l'agent ou manuellement)
+print("Collecte toutes les 60 secondes... Ctrl+C pour arrêter")
 print("-" * 50)
 
 while True:

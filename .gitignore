@@ -1,3 +1,24 @@
+# Environnement Python
 venv/
 .venv/
 .env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Rapports générés automatiquement (ne pas versionner)
+rapports/
+
+# Données générées / extraites
+*.csv
+data/*.log
+
+# Drain3 (cache de parsing)
+.drain3/
+
+# IDE
+.vscode/
+.idea/
+*.swp

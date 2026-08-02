@@ -1,0 +1,31 @@
+# ============================================================
+# requirements.txt — Agent Monitoring DevOps IA
+# ============================================================
+# Installation :
+#   pip install -r requirements.txt
+#
+# NOTE : Le projet est conçu pour GitHub Codespaces (Linux/Python 3.11+).
+#        Sur Windows, certains packages peuvent nécessiter des ajustements.
+# ============================================================
+# --- Agent LangGraph ---
+langgraph>=0.2.0
+langchain-core>=0.2.0
+# --- LLM Google Gemini ---
+google-genai>=1.0.0
+# --- Machine Learning ---
+scikit-learn>=1.4.0
+numpy>=1.26.0
+pandas>=2.2.0
+# --- Parsing de logs ---
+# IMPORTANT : drain3 requiert Python >= 3.8
+drain3>=0.9.11
+# --- Infrastructure ---
+# IMPORTANT : utiliser la version 8.x du client elasticsearch
+# pour correspondre au serveur Elasticsearch 8.13.4 du docker-compose.
+# La version 9.x envoie un header de compatibilité que le serveur 8.x refuse.
+elasticsearch>=8.13.0,<9.0.0
+redis>=5.0.0
+requests>=2.31.0
+prometheus-client>=0.20.0
+# --- Configuration ---
+python-dotenv>=1.0.0

@@ -6,6 +6,7 @@ infra_check → collect_data → run_ml_pipeline → run_llm_analyzer
 """
 
 import os
+import sys
 import json
 import time
 import subprocess
@@ -18,7 +19,14 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnableLambda
 
-load_dotenv("/workspaces/agent-monitoring-devops/.env")
+# Charger .env depuis le dossier racine du projet (parent de agent/)
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_ROOT_DIR, ".env"))
+
+# Ajouter le dossier pipeline/ au path Python pour pouvoir importer les modules
+_PIPELINE_DIR = os.path.join(_ROOT_DIR, "pipeline")
+if _PIPELINE_DIR not in sys.path:
+    sys.path.insert(0, _PIPELINE_DIR)
 
 r = redis.Redis(host='localhost', port=6379, decode_responses=True)
 
@@ -131,6 +139,8 @@ def collect_data(state: AgentState) -> AgentState:
     print("[AGENT] NOEUD 2 — Collecte des données")
     print("="*50)
 
+    collector_script = os.path.join(_PIPELINE_DIR, "collector_redis.py")
+
     try:
         # Vérifier s'il y a déjà des données récentes dans Redis
         nb_logs = r.llen("bgl_logs_all")
@@ -145,8 +155,7 @@ def collect_data(state: AgentState) -> AgentState:
         else:
             print("  → Lancement du collecteur (60 secondes)...")
             result = subprocess.run(
-                ["python3",
-                 "/workspaces/agent-monitoring-devops/collector_redis.py"],
+                [sys.executable, collector_script],
                 timeout=70,
                 capture_output=True,
                 text=True
@@ -181,10 +190,11 @@ def run_ml_pipeline(state: AgentState) -> AgentState:
     print("[AGENT] NOEUD 3 — Pipeline ML (One-Class SVM + K-Means)")
     print("="*50)
 
+    ml_script = os.path.join(_PIPELINE_DIR, "ml_pipeline.py")
+
     try:
         result = subprocess.run(
-            ["python3",
-             "/workspaces/agent-monitoring-devops/ml_pipeline.py"],
+            [sys.executable, ml_script],
             timeout=120,
             capture_output=True,
             text=True
@@ -235,10 +245,11 @@ def run_llm_analyzer(state: AgentState) -> AgentState:
     print("[AGENT] NOEUD 4 — Analyse LLM Gemini")
     print("="*50)
 
+    llm_script = os.path.join(_PIPELINE_DIR, "llm_analyzer_bgl.py")
+
     try:
         result = subprocess.run(
-            ["python3",
-             "/workspaces/agent-monitoring-devops/llm_analyzer_bgl.py"],
+            [sys.executable, llm_script],
             timeout=60,
             capture_output=True,
             text=True
@@ -389,14 +400,14 @@ def log_only(state: AgentState) -> AgentState:
 
 
 # -------------------------------------------------------
-# Routeur conditionnel
+# Routeurs conditionnels
 # -------------------------------------------------------
 def router_infra(state: AgentState) -> Literal["collect_data", "end_infra_error"]:
     if state["infra_ok"]:
         return "collect_data"
     else:
         return "end_infra_error"
-    
+
 def end_infra_error(state: AgentState) -> AgentState:
     state["severite"] = "CRITIQUE"
     state["rapport"] = f"Infrastructure défaillante : {state['erreurs']}"
@@ -417,9 +428,6 @@ def router_ml(state: AgentState) -> Literal["run_llm_analyzer", "send_alert"]:
     else:
         state["severite"] = "ÉLEVÉ"
         return "send_alert"
-
-def router_llm(state: AgentState) -> Literal["decide_severite", "decide_severite"]:
-    return "decide_severite"
 
 def router_severite(state: AgentState) -> Literal["send_alert", "log_only"]:
     if state["severite"] in ["CRITIQUE", "ÉLEVÉ"]:
@@ -449,6 +457,7 @@ def build_agent():
     graph.add_edge("end_infra_error", END)
     graph.add_conditional_edges("collect_data", router_collect)
     graph.add_conditional_edges("run_ml_pipeline", router_ml)
+    # run_llm_analyzer → decide_severite (direct, pas de routeur conditionnel)
     graph.add_edge("run_llm_analyzer", "decide_severite")
     graph.add_conditional_edges("decide_severite", router_severite)
     graph.add_edge("send_alert", END)

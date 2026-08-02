@@ -5,8 +5,9 @@ from google import genai
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
-# Charger les variables d'environnement depuis .env
-load_dotenv("/workspaces/agent-monitoring-devops/.env")
+# Charger .env depuis le dossier racine du projet (deux niveaux au-dessus de pipeline/)
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_ROOT_DIR, ".env"))
 
 r = redis.Redis(host='localhost', port=6379, decode_responses=True)
 
@@ -135,6 +136,36 @@ def stocker_rapport_redis(rapport, ml_results):
     print("Rapport stocké dans Redis : 'rapport_llm_bgl'")
 
 
+def sauvegarder_rapport_md(rapport, ml_results):
+    """Sauvegarde le rapport dans un fichier Markdown horodaté"""
+    # Dossier rapports/ à la racine du projet (deux niveaux au-dessus de pipeline/)
+    dossier = os.path.join(_ROOT_DIR, "rapports")
+    os.makedirs(dossier, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    nom_fichier = f"rapport_bgl_{timestamp}.md"
+    chemin = os.path.join(dossier, nom_fichier)
+
+    resume = ml_results.get("resume", {})
+
+    entete = f"""# Rapport d'analyse BGL — {timestamp}
+
+**Logs analysés :** {resume.get('total_logs_analyses', 0)}
+**Anomalies détectées :** {resume.get('anomalies_detectees', 0)} ({resume.get('taux_anomalie_pct', 0):.1f}%)
+**F1-Score :** {resume.get('f1_score', 0):.3f}
+
+---
+
+"""
+
+    with open(chemin, "w", encoding="utf-8") as f:
+        f.write(entete)
+        f.write(rapport)
+
+    print(f"Rapport Markdown sauvegardé : {chemin}")
+    return chemin
+
+
 # Programme principal
 print("=" * 60)
 print("ANALYSEUR LLM BGL — Gemini 2.5 Flash")
@@ -160,35 +191,6 @@ print("RAPPORT D'ANALYSE LLM GEMINI")
 print('='*60)
 print(rapport)
 print('='*60)
-
-
-def sauvegarder_rapport_md(rapport, ml_results):
-    """Sauvegarde le rapport dans un fichier Markdown horodaté"""
-    dossier = "/workspaces/agent-monitoring-devops/rapports"
-    os.makedirs(dossier, exist_ok=True)
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    nom_fichier = f"rapport_bgl_{timestamp}.md"
-    chemin = os.path.join(dossier, nom_fichier)
-
-    resume = ml_results.get("resume", {})
-
-    entete = f"""# Rapport d'analyse BGL — {timestamp}
-
-**Logs analysés :** {resume.get('total_logs_analyses', 0)}
-**Anomalies détectées :** {resume.get('anomalies_detectees', 0)} ({resume.get('taux_anomalie_pct', 0):.1f}%)
-**F1-Score :** {resume.get('f1_score', 0):.3f}
-
----
-
-"""
-
-    with open(chemin, "w", encoding="utf-8") as f:
-        f.write(entete)
-        f.write(rapport)
-
-    print(f"Rapport Markdown sauvegardé : {chemin}")
-    return chemin
 
 stocker_rapport_redis(rapport, ml_results)
 sauvegarder_rapport_md(rapport, ml_results)
