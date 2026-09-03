@@ -14,8 +14,7 @@ A comprehensive monitoring and DevOps toolkit for managing distributed agents wi
 ## Requirements
 
 - Python 3.8+
-- Docker (optional, for containerized deployment)
-- [Add any other specific requirements]
+- Docker (for containerized deployment)
 
 ## Installation
 
