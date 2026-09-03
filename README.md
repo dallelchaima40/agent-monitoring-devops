@@ -177,15 +177,11 @@ Contributions are welcome! Please:
 
 Please ensure your code passes tests and follows our code style guidelines.
 
-## License
-
-This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
-
 ## Support
 
 For issues, questions, or suggestions:
 
-- 📧 **Email**: [your-email@example.com]
+- 📧 **Email**: [cdallel9@gmail.com]
 - 🐛 **Issues**: [GitHub Issues](https://github.com/dallelchaima40/agent-monitoring-devops/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/dallelchaima40/agent-monitoring-devops/discussions)
 
@@ -194,7 +190,4 @@ For issues, questions, or suggestions:
 See [CHANGELOG.md](CHANGELOG.md) for a detailed version history.
 
 ---
-
-**Last Updated**: 2026-09-03
-
 Built with Python • Containerized with Docker • DevOps Ready
